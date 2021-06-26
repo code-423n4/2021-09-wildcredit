@@ -12,8 +12,6 @@ Some of the checklists in this doc are for **C4 (🐺)** and some of them are fo
 
 ---
 
-# Contest scoping
-
 ## 🐺 C4: Set up repos
 - [x] Create a new private repo named `YYYY-MM-sponsorname` using this repo as a template.
 - [ ] Get GitHub handles from sponsor.
@@ -24,10 +22,30 @@ Some of the checklists in this doc are for **C4 (🐺)** and some of them are fo
 
 - [ ] Delete this checklist and wait for sponsor to complete their scoping checklist.
 
-## ⭐️ Sponsor: Provide contest scoping details
+---
 
-Under "Contest scope information" below, include the following:
+# Contest prep
 
+## 🐺 C4: Contest prep
+- [x] Rename this repo to reflect contest date (if applicable)
+- [x] Rename contest H1 below
+- [x] Add link to report form in contest details below
+- [x] Update pot sizes
+- [x] Fill in start and end times in contest bullets below.
+- [ ] Add matching info to the [code423n4.com public contest data here](https://github.com/code-423n4/code423n4.com/blob/main/_data/contests/contests.csv))
+- [ ] Delete this checklist.
+
+## ⭐️ Sponsor: Provide marketing details
+
+- [ ] Your logo (URL or add file to this repo)
+- [ ] Your primary Twitter handle
+- [ ] Any other Twitter handles we can/should tag in (e.g. organizers' personal accounts, etc.)
+- [ ] Your Discord URI
+- [ ] Your website
+- [ ] Optional: Do you have any quirks, recurring themes, iconic tweets, community "secret handshake" stuff we could work in? How do your people recognize each other, for example?
+
+## ⭐️ Sponsor: Contest prep
+- [ ] Add all of the code to this repo that you want reviewed under SPONSORS ADD INFO HERE
 - [ ] Name of each contract and:
   - [ ] lines of code in each
   - [ ] external contracts called in each
@@ -36,42 +54,6 @@ Under "Contest scope information" below, include the following:
 - [ ] Does the token conform to the ERC-20 standard? In what specific ways does it differ?
 - [ ] Describe anything else that adds any special logic that makes your approach unique
 - [ ] Identify any areas of specific concern in reviewing the code
-- [ ] Add all of the code to this repo that you want reviewed
-- [ ] Create a PR to this repo with the above changes.
-- [ ] Delete this checklist and wait for C4 to provide a recommended contest minimum.
-
----
-
-# ⭐️ Sponsor: Provide marketing details
-
-- [ ] Your logo (URL or add file to this repo)
-- [ ] Your primary Twitter handle
-- [ ] Any other Twitter handles we can/should tag in (e.g. organizers' personal accounts, etc.)
-- [ ] Your Discord URI
-- [ ] Your website
-- [ ] Optional: Do you have any quirks, recurring themes, iconic tweets, community "secret handshake" stuff we could work in? How do your people recognize each other, for example? 
-
----
-
-# Contest scope information
-
-[ ⭐️ SPONSORS ADD INFO HERE ]
-
----
-
-# Contest prep
-
-## 🐺 C4: Contest prep
-- [x] Rename this repo to reflect contest date (if applicable)
-- [x] Rename contest H1 below
-- [ ] Add link to report form in contest details below
-- [x] Update pot sizes
-- [x] Fill in start and end times in contest bullets below.
-- [ ] Move any relevant information in "contest scope information" above to the bottom of this readme.
-- [ ] Add matching info to the [code423n4.com public contest data here](https://github.com/code-423n4/code423n4.com/blob/main/_data/contests/contests.csv))
-- [ ] Delete this checklist.
-
-## ⭐️ Sponsor: Contest prep
 - [ ] Make sure your code is thoroughly commented using the [NatSpec format](https://docs.soliditylang.org/en/v0.5.10/natspec-format.html#natspec-format).
 - [ ] Modify the bottom of this `README.md` file to describe how your code is supposed to work with links to any relevent documentation and any other criteria/details that the C4 Wardens should keep in mind when reviewing
 - [ ] Please have final versions of contracts and documentation added/updated in this repo **no less than 8 hours prior to contest start time.**
