@@ -16,12 +16,11 @@ Some of the checklists in this doc are for **C4 (🐺)** and some of them are fo
 
 ## ⭐️ Sponsor: Provide marketing details
 
-- [ ] Your logo (URL or add file to this repo)
-- [ ] Your primary Twitter handle
-- [ ] Any other Twitter handles we can/should tag in (e.g. organizers' personal accounts, etc.)
-- [ ] Your Discord URI
-- [ ] Your website
-- [ ] Optional: Do you have any quirks, recurring themes, iconic tweets, community "secret handshake" stuff we could work in? How do your people recognize each other, for example?
+- https://github.com/code-423n4/2021-07-wildcredit/blob/main/wild_credit_logo.png
+- https://twitter.com/wildcredit
+- https://twitter.com/0xdev0
+- https://discord.gg/emcBDpwf6G
+- https://wild.credit/
 
 ## ⭐️ Sponsor: Contest prep
 - [ ] Add all of the code to this repo that you want reviewed under SPONSORS ADD INFO HERE
