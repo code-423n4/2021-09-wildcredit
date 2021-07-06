@@ -1,17 +1,10 @@
-# ✨ So you want to sponsor a contest
-
-This `README.md` contains a set of checklists for our contest collaboration.
-
-Your contest will use two repos: 
-- **a _contest_ repo** (this one), which is used for scoping your contest and for providing information to contestants (wardens)
-- **a _findings_ repo**, where issues are submitted. (We'll set that one up later.) 
-
-Ultimately, when we launch the contest, this contest repo will be made public and will contain the smart contracts to be reviewed and all the information needed for contest participants. The findings repo will be made public after the contest is over and your team has mitigated the identified issues.
-
-Some of the checklists in this doc are for **C4 (🐺)** and some of them are for **you as the contest sponsor (⭐️)**.
-
----
-
+# Wild Credit contest details
+- $50,000 USDC main award pot
+- Join [C4 Discord](https://discord.gg/EY5dvm3evD) to register
+- Submit findings [using the C4 form](https://code423n4.com/2021-07-wildcredit-contest/submit)
+- [Read our guidelines for more details](https://code423n4.com/compete)
+- Starts July 8 2021 00:00 UTC
+- Ends July 14 2021 23:59 UTC
 # Contest prep
 
 ## ⭐️ Sponsor: Provide marketing details
@@ -21,21 +14,6 @@ Some of the checklists in this doc are for **C4 (🐺)** and some of them are fo
 - https://twitter.com/0xdev0
 - https://discord.gg/emcBDpwf6G
 - https://wild.credit/
-
----
-
-# Wild Credit contest details
-- $50,000 USDC main award pot
-- Join [C4 Discord](https://discord.gg/EY5dvm3evD) to register
-- Submit findings [using the C4 form](https://code423n4.com/2021-07-wildcredit-contest/submit)
-- [Read our guidelines for more details](https://code423n4.com/compete)
-- Starts July 8 2021 00:00 UTC
-- Ends July 14 2021 23:59 UTC
-
-This repo will be made public before the start of the contest. (C4 delete this line when made public)
-
-[ ⭐️ SPONSORS ADD INFO HERE ]
-
 
 Docs: https://wild-credit.gitbook.io/wild-credit/
 
