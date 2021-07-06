@@ -7,15 +7,7 @@
 - Ends July 14 2021 23:59 UTC
 # Contest prep
 
-## ⭐️ Sponsor: Provide marketing details
-
-- https://github.com/code-423n4/2021-07-wildcredit/blob/main/wild_credit_logo.png
-- https://twitter.com/wildcredit
-- https://twitter.com/0xdev0
-- https://discord.gg/emcBDpwf6G
-- https://wild.credit/
-
-Docs: https://wild-credit.gitbook.io/wild-credit/
+## Contest scoping
 
 Wild Credit is a lending protocol. Unlike Compound or Aave which are composed of a "basket" of approved tokens, Wild Credit instead has isolated lending pairs. Similar to Uniswap, each pair does not influence the state of any other pair in any way. This allows much better risk management and allows the protocol to list less liquid tokens.
 
@@ -30,3 +22,12 @@ ERC20 differance: `LPTokenMaster.sol` changes the `_transfer` function
 Please disregard anything currently deployed on mainnet. Subject to review is only the code in this repo and nothing else.
 
 External calls are made by the oracles - Chainlink and Uniswap V3 oracles.
+
+
+- https://github.com/code-423n4/2021-07-wildcredit/blob/main/wild_credit_logo.png
+- https://twitter.com/wildcredit
+- https://twitter.com/0xdev0
+- https://discord.gg/emcBDpwf6G
+- https://wild.credit/
+
+Docs: https://wild-credit.gitbook.io/wild-credit/
