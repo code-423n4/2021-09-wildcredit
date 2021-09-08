@@ -1,10 +1,11 @@
 # Wild Credit contest details
-- $50,000 USDC main award pot
+- $47,500 USDC main award pot
+- $2,500 USDC gas optimization award pot
 - Join [C4 Discord](https://discord.gg/EY5dvm3evD) to register
-- Submit findings [using the C4 form](https://code423n4.com/2021-07-wild-credit-contest/submit)
+- Submit findings [using the C4 form](https://code423n4.com/2021-09-wild-credit-contest/submit)
 - [Read our guidelines for more details](https://code423n4.com/compete)
-- Starts July 8 2021 00:00 UTC
-- Ends July 14 2021 23:59 UTC
+- Starts September 23 2021 00:00 UTC
+- Ends September 29 2021 23:59 UTC
 
 [wild.credit](https://wild.credit/) • [@WildCredit](https://twitter.com/WildCredit) • [@0xdev0](https://twitter.com/0xdev0) • [discord](https://discord.gg/emcBDpwf6G) • [GitBook](https://wild-credit.gitbook.io/wild-credit/)
 ## Contest scoping
