@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.0;
-
-import './ILendingPair.sol';
+pragma solidity 0.8.6;
 
 interface IInterestRateModel {
-  function systemRate(ILendingPair _pair, address _token) external view returns(uint);
-  function supplyRatePerBlock(ILendingPair _pair, address _token) external view returns(uint);
-  function borrowRatePerBlock(ILendingPair _pair, address _token) external view returns(uint);
+  function lpRate(address _pair, address _token) external view returns(uint);
+  function interestRatePerBlock(address _pair, address _token, uint _totalSupply, uint _totalDebt) external view returns(uint);
 }

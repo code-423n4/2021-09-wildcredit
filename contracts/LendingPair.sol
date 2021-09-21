@@ -3,41 +3,50 @@
 // Copyright (c) 2021 0xdev0 - All rights reserved
 // https://twitter.com/0xdev0
 
-pragma solidity ^0.8.0;
+pragma solidity 0.8.6;
 
 import './interfaces/IERC20.sol';
+import './interfaces/IERC721.sol';
 import './interfaces/ILPTokenMaster.sol';
 import './interfaces/ILendingPair.sol';
-import './interfaces/IController.sol';
-import './interfaces/IRewardDistribution.sol';
+import './interfaces/ILendingController.sol';
+import './interfaces/univ3/IUniswapV3Helper.sol';
 import './interfaces/IInterestRateModel.sol';
 
 import './external/Math.sol';
-import './external/Ownable.sol';
 import './external/Address.sol';
 import './external/Clones.sol';
-import './external/ERC20.sol';
+import './external/ReentrancyGuard.sol';
 
+import './ERC721Receivable.sol';
 import './TransferHelper.sol';
 
-contract LendingPair is TransferHelper {
+contract LendingPair is ILendingPair, ReentrancyGuard, TransferHelper, ERC721Receivable {
 
-  // Prevents division by zero and other undesirable behaviour
-  uint public constant MIN_RESERVE = 1000;
+  IERC721 internal constant uniManager = IERC721(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
+  uint    public   constant LIQ_MIN_HEALTH = 1e18;
 
   using Address for address;
   using Clones for address;
 
-  mapping (address => mapping (address => uint)) public debtOf;
-  mapping (address => mapping (address => uint)) public accountInterestSnapshot;
-  mapping (address => uint) public cumulativeInterestRate; // 100e18 = 100%
-  mapping (address => uint) public totalDebt;
-  mapping (address => IERC20) public lpToken;
+  mapping (address => mapping (address => uint)) public override supplySharesOf;
+  mapping (address => mapping (address => uint)) public debtSharesOf;
+  mapping (address => uint) public pendingSystemFees;
+  mapping (address => uint) public lastBlockAccrued;
+  mapping (address => uint) public override totalSupplyShares;
+  mapping (address => uint) public totalSupplyAmount;
+  mapping (address => uint) public totalDebtShares;
+  mapping (address => uint) public totalDebtAmount;
+  mapping (address => uint) public uniPosition;
+  mapping (address => uint) private decimals;
+  mapping (address => address) public override lpToken;
 
-  IController public controller;
-  address public tokenA;
-  address public tokenB;
-  uint public lastBlockAccrued;
+  IUniswapV3Helper   private uniV3Helper;
+  ILendingController public  lendingController;
+
+  address public feeRecipient;
+  address public override tokenA;
+  address public override tokenB;
 
   event Liquidation(
     address indexed account,
@@ -51,116 +60,173 @@ contract LendingPair is TransferHelper {
   event Withdraw(address indexed token, uint amount);
   event Borrow(address indexed token, uint amount);
   event Repay(address indexed account, address indexed token, uint amount);
+  event CollectSystemFee(address indexed token, uint amount);
+  event DepositUniPosition(address indexed account, uint positionID);
+  event WithdrawUniPosition(uint positionID);
 
   receive() external payable {}
 
-  function initialize(
-    address _lpTokenMaster,
-    address _controller,
-    IERC20 _tokenA,
-    IERC20 _tokenB
-  ) external {
-    require(address(tokenA) == address(0), "LendingPair: already initialized");
-    require(address(_tokenA) != address(0) && address(_tokenB) != address(0), "LendingPair: cannot be ZERO address");
-
-    controller = IController(_controller);
-    tokenA = address(_tokenA);
-    tokenB = address(_tokenB);
-    lastBlockAccrued = block.number;
-
-    lpToken[tokenA] = _createLpToken(_lpTokenMaster);
-    lpToken[tokenB] = _createLpToken(_lpTokenMaster);
+  modifier onlyLpToken() {
+    require(lpToken[tokenA] == msg.sender || lpToken[tokenB] == msg.sender, "LendingController: caller must be LP token");
+    _;
   }
 
-  function depositRepay(address _account, address _token, uint _amount) external {
+  function initialize(
+    address _lpTokenMaster,
+    address _lendingController,
+    address _uniV3Helper,
+    address _feeRecipient,
+    address _tokenA,
+    address _tokenB
+  ) external {
+    require(tokenA == address(0), "LendingPair: already initialized");
+    require(_tokenA != address(0) && _tokenB != address(0), "LendingPair: cannot be ZERO address");
+
+    lendingController = ILendingController(_lendingController);
+    uniV3Helper       = IUniswapV3Helper(_uniV3Helper);
+    feeRecipient      = _feeRecipient;
+    tokenA = _tokenA;
+    tokenB = _tokenB;
+    lastBlockAccrued[tokenA] = block.number;
+    lastBlockAccrued[tokenB] = block.number;
+
+    decimals[tokenA] = IERC20(tokenA).decimals();
+    decimals[tokenB] = IERC20(tokenB).decimals();
+
+    require(decimals[tokenA] >= 6 && decimals[tokenB] >= 6, "LendingPair: min 6 decimals");
+
+    lpToken[tokenA] = _createLpToken(_lpTokenMaster, tokenA);
+    lpToken[tokenB] = _createLpToken(_lpTokenMaster, tokenB);
+  }
+
+  // Deposit limits do not apply to Uniswap positions
+  function depositUniPosition(address _account, uint _positionID) external {
+    _checkDepositsEnabled();
+    _validateUniPosition(_positionID);
+    require(uniPosition[_account] == 0, "LendingPair: one position per account");
+
+    uniManager.safeTransferFrom(msg.sender, address(this), _positionID);
+    uniPosition[_account] = _positionID;
+
+    emit DepositUniPosition(_account, _positionID);
+  }
+
+  function withdrawUniPosition() external {
+    uint positionID = uniPosition[msg.sender];
+    uniManager.safeTransferFrom(address(this), msg.sender, positionID);
+
+    uniPosition[msg.sender] = 0;
+    checkAccountHealth(msg.sender);
+
+    emit WithdrawUniPosition(positionID);
+  }
+
+  // claim & mint supply from uniswap fees
+  function uniClaimDeposit() external {
+    (uint amountA, uint amountB) = _uniCollectFees(msg.sender);
+    _mintSupplyAmount(tokenA, msg.sender, amountA);
+    _mintSupplyAmount(tokenB, msg.sender, amountB);
+  }
+
+  // claim & withdraw uniswap fees
+  function uniClaimWithdraw() external {
+    (uint amountA, uint amountB) = _uniCollectFees(msg.sender);
+    _safeTransfer(tokenA, msg.sender, amountA);
+    _safeTransfer(tokenB, msg.sender, amountB);
+  }
+
+  function depositRepay(address _account, address _token, uint _amount) external nonReentrant {
     _validateToken(_token);
-    accrueAccount(_account);
+    accrue(_token);
 
     _depositRepay(_account, _token, _amount);
     _safeTransferFrom(_token, msg.sender, _amount);
   }
 
-  function depositRepayETH(address _account) external payable {
-    accrueAccount(_account);
+  function depositRepayETH(address _account) external payable nonReentrant {
+    _validateToken(address(WETH));
+    accrue(address(WETH));
 
     _depositRepay(_account, address(WETH), msg.value);
     _depositWeth();
   }
 
-  function deposit(address _account, address _token, uint _amount) external {
+  function deposit(address _account, address _token, uint _amount) external override nonReentrant {
     _validateToken(_token);
-    accrueAccount(_account);
+    accrue(_token);
 
     _deposit(_account, _token, _amount);
     _safeTransferFrom(_token, msg.sender, _amount);
   }
 
-  function withdrawBorrow(address _token, uint _amount) external {
+  function withdrawBorrow(address _token, uint _amount) external nonReentrant {
     _validateToken(_token);
-    accrueAccount(msg.sender);
+    accrue(_token);
 
     _withdrawBorrow(_token, _amount);
-    _safeTransfer(IERC20(_token), msg.sender, _amount);
+    _safeTransfer(_token, msg.sender, _amount);
   }
 
-  function withdrawBorrowETH(uint _amount) external {
-    accrueAccount(msg.sender);
+  function withdrawBorrowETH(uint _amount) external nonReentrant {
+    _validateToken(address(WETH));
+    accrue(address(WETH));
 
     _withdrawBorrow(address(WETH), _amount);
     _wethWithdrawTo(msg.sender, _amount);
-    _checkMinReserve(address(WETH));
   }
 
-  function withdraw(address _token, uint _amount) external {
+  function withdraw(address _token, uint _amount) external override nonReentrant {
     _validateToken(_token);
-    accrueAccount(msg.sender);
+    accrue(_token);
 
-    _withdraw(_token, _amount);
-    _safeTransfer(IERC20(_token), msg.sender, _amount);
+    _withdrawShares(_token, _supplyToShares(_token, _amount));
+    _safeTransfer(_token, msg.sender, _amount);
   }
 
-  function withdrawAll(address _token) external {
+  function withdrawAll(address _token) external override nonReentrant {
     _validateToken(_token);
-    accrueAccount(msg.sender);
+    accrue(_token);
 
-    uint amount = lpToken[address(_token)].balanceOf(msg.sender);
-    _withdraw(_token, amount);
-    _safeTransfer(IERC20(_token), msg.sender, amount);
+    uint shares = supplySharesOf[_token][msg.sender];
+    _withdrawShares(_token, shares);
+    _safeTransfer(_token, msg.sender, _sharesToSupply(_token, shares));
   }
 
-  function withdrawAllETH() external {
-    accrueAccount(msg.sender);
+  function withdrawAllETH() external nonReentrant {
+    _validateToken(address(WETH));
+    accrue(address(WETH));
 
-    uint amount = lpToken[address(WETH)].balanceOf(msg.sender);
-    _withdraw(address(WETH), amount);
-    _wethWithdrawTo(msg.sender, amount);
+    uint shares = supplySharesOf[address(WETH)][msg.sender];
+    _withdrawShares(address(WETH), shares);
+    _wethWithdrawTo(msg.sender, _sharesToSupply(address(WETH), shares));
   }
 
-  function borrow(address _token, uint _amount) external {
+  function borrow(address _token, uint _amount) external nonReentrant {
     _validateToken(_token);
-    accrueAccount(msg.sender);
+    accrue(_token);
 
     _borrow(_token, _amount);
-    _safeTransfer(IERC20(_token), msg.sender, _amount);
+    _safeTransfer(_token, msg.sender, _amount);
   }
 
-  function repayAll(address _account, address _token) external {
+  function repayAll(address _account, address _token, uint _maxAmount) external nonReentrant {
     _validateToken(_token);
-    accrueAccount(_account);
+    accrue(_token);
 
-    uint amount = debtOf[_token][_account];
-    _repay(_account, _token, amount);
+    uint amount = _repayShares(_account, _token, debtSharesOf[_token][_account]);
+    require(amount <= _maxAmount, "LendingPair: amount <= _maxAmount");
     _safeTransferFrom(_token, msg.sender, amount);
   }
 
-  function repayAllETH(address _account) external payable {
-    accrueAccount(_account);
+  function repayAllETH(address _account, uint _maxAmount) external payable nonReentrant {
+    _validateToken(address(WETH));
+    accrue(address(WETH));
 
-    uint amount = debtOf[address(WETH)][_account];
+    uint amount = _repayShares(_account, address(WETH), debtSharesOf[address(WETH)][_account]);
     require(msg.value >= amount, "LendingPair: insufficient ETH deposit");
+    require(amount <= _maxAmount, "LendingPair: amount <= _maxAmount");
 
     _depositWeth();
-    _repay(_account, address(WETH), amount);
     uint refundAmount = msg.value > amount ? (msg.value - amount) : 0;
 
     if (refundAmount > 0) {
@@ -168,46 +234,132 @@ contract LendingPair is TransferHelper {
     }
   }
 
-  function repay(address _account, address _token, uint _amount) external {
+  function repay(address _account, address _token, uint _amount) external nonReentrant {
     _validateToken(_token);
-    accrueAccount(_account);
+    accrue(_token);
 
-    _repay(_account, _token, _amount);
+    _repayShares(_account, _token, _debtToShares(_token, _amount));
     _safeTransferFrom(_token, msg.sender, _amount);
   }
 
-  function accrue() public {
-    if (lastBlockAccrued < block.number) {
-      _accrueInterest(tokenA);
-      _accrueInterest(tokenB);
-      lastBlockAccrued = block.number;
+  function accrue(address _token) public {
+    if (lastBlockAccrued[_token] < block.number) {
+      uint newDebt   = _accrueDebt(_token);
+      uint newSupply = newDebt * _lpRate(_token) / 100e18;
+      totalSupplyAmount[_token] += newSupply;
+      pendingSystemFees[_token] += (newDebt - newSupply);
+      lastBlockAccrued[_token]   = block.number;
     }
   }
 
-  function accrueAccount(address _account) public {
-    _distributeReward(_account);
-    accrue();
-    _accrueAccountInterest(_account);
+  function collectSystemFee(address _token, uint _amount) external nonReentrant {
+    _validateToken(_token);
+    pendingSystemFees[_token] -= _amount;
+    _safeTransfer(_token, feeRecipient, _amount);
+    emit CollectSystemFee(_token, _amount);
+  }
 
-    if (_account != feeRecipient()) {
-      _accrueAccountInterest(feeRecipient());
-    }
+  function transferLp(address _token, address _from, address _to, uint _amount) external override onlyLpToken {
+    require(debtSharesOf[_token][_to] == 0, "LendingPair: cannot deposit borrowed token");
+    supplySharesOf[_token][_from] -= _amount;
+    supplySharesOf[_token][_to]   += _amount;
+    checkAccountHealth(_from);
+  }
+
+  // Sell collateral to reduce debt and increase accountHealth
+  // Set _repayAmount to type(uint).max to repay all debt, inc. pending interest
+  function liquidateAccount(
+    address _account,
+    address _repayToken,
+    uint    _repayAmount,
+    uint    _minSupplyOutput
+  ) external nonReentrant {
+
+    // Input validation and adjustments
+
+    _validateToken(_repayToken);
+
+    address supplyToken = _repayToken == tokenA ? tokenB : tokenA;
+
+    // Check account is underwater after interest
+
+    accrue(supplyToken);
+    accrue(_repayToken);
+
+    uint health = accountHealth(_account);
+    require(health < LIQ_MIN_HEALTH, "LendingPair: account health < LIQ_MIN_HEALTH");
+
+    // Fully unwrap Uni position - withdraw & mint supply
+
+    _unwrapUniPosition(_account);
+
+    // Calculate balance adjustments
+
+    _repayAmount = Math.min(_repayAmount, _debtOf(_repayToken, _account));
+    (uint repayPrice, uint supplyPrice) = lendingController.tokenPrices(_repayToken, supplyToken);
+
+    uint supplyDebt   = _convertTokenValues(_repayToken, supplyToken, _repayAmount, repayPrice, supplyPrice);
+    uint callerFee    = supplyDebt * lendingController.liqFeeCaller(_repayToken) / 100e18;
+    uint systemFee    = supplyDebt * lendingController.liqFeeSystem(_repayToken) / 100e18;
+    uint supplyBurn   = supplyDebt + callerFee + systemFee;
+    uint supplyOutput = supplyDebt + callerFee;
+
+    require(supplyOutput >= _minSupplyOutput, "LendingPair: supplyOutput >= _minSupplyOutput");
+
+    // Adjust balances
+
+    _burnSupplyShares(supplyToken, _account, _supplyToShares(supplyToken, supplyBurn));
+    pendingSystemFees[supplyToken] += systemFee;
+    _burnDebtShares(_repayToken, _account, _debtToShares(_repayToken, _repayAmount));
+
+    // Uni position unwrapping can mint supply of already borrowed tokens
+
+    _repayDebtFromSupply(_account, tokenA);
+    _repayDebtFromSupply(_account, tokenB);
+
+    // Settle token transfers
+
+    _safeTransferFrom(_repayToken, msg.sender, _repayAmount);
+    _mintSupplyAmount(supplyToken, msg.sender, supplyOutput);
+
+    emit Liquidation(_account, _repayToken, supplyToken, _repayAmount, supplyOutput);
   }
 
   function accountHealth(address _account) public view returns(uint) {
 
-    if (debtOf[tokenA][_account] == 0 && debtOf[tokenB][_account] == 0) {
-      return controller.LIQ_MIN_HEALTH();
+    if (debtSharesOf[tokenA][_account] == 0 && debtSharesOf[tokenB][_account] == 0) {
+      return LIQ_MIN_HEALTH;
     }
 
-    uint totalAccountSupply  = _supplyCredit(_account, tokenA, tokenA)  + _supplyCredit(_account, tokenB, tokenA);
-    uint totalAccountBorrrow = _borrowBalance(_account, tokenA, tokenA) + _borrowBalance(_account, tokenB, tokenA);
+    (uint priceA, uint priceB) = lendingController.tokenPrices(tokenA, tokenB);
+    uint colFactorA = lendingController.colFactor(tokenA);
+    uint colFactorB = lendingController.colFactor(tokenB);
 
-    return totalAccountSupply * 1e18 / totalAccountBorrrow;
+    uint creditA   = _supplyBalanceConverted(_account, tokenA, tokenA, priceA, priceA) * colFactorA / 100e18;
+    uint creditB   = _supplyBalanceConverted(_account, tokenB, tokenA, priceB, priceA) * colFactorB / 100e18;
+    uint creditUni = _supplyCreditUni(_account, tokenA, priceA, priceB, colFactorA, colFactorB);
+
+    uint totalAccountSupply = creditA + creditB + creditUni;
+
+    uint totalAccountBorrow =
+      _borrowBalanceConverted(_account, tokenA, tokenA, priceA, priceA) +
+      _borrowBalanceConverted(_account, tokenB, tokenA, priceB, priceA);
+
+    return totalAccountSupply * 1e18 / totalAccountBorrow;
+  }
+
+  function debtOf(address _token, address _account) external view returns(uint) {
+    _validateToken(_token);
+    return _debtOf(_token, _account);
+  }
+
+  function supplyOf(address _token, address _account) external view override returns(uint) {
+    _validateToken(_token);
+    return _supplyOf(_token, _account);
   }
 
   // Get borow balance converted to the units of _returnToken
-  function borrowBalance(
+  function borrowBalanceConverted(
     address _account,
     address _borrowedToken,
     address _returnToken
@@ -216,96 +368,36 @@ contract LendingPair is TransferHelper {
     _validateToken(_borrowedToken);
     _validateToken(_returnToken);
 
-    return _borrowBalance(_account, _borrowedToken, _returnToken);
+    (uint borrowPrice, uint returnPrice) = lendingController.tokenPrices(_borrowedToken, _returnToken);
+    return _borrowBalanceConverted(_account, _borrowedToken, _returnToken, borrowPrice, returnPrice);
   }
 
-  function supplyBalance(
+  function supplyBalanceConverted(
     address _account,
     address _suppliedToken,
     address _returnToken
-  ) external view returns(uint) {
+  ) external view override returns(uint) {
 
     _validateToken(_suppliedToken);
     _validateToken(_returnToken);
 
-    return _supplyBalance(_account, _suppliedToken, _returnToken);
+    (uint supplyPrice, uint returnPrice) = lendingController.tokenPrices(_suppliedToken, _returnToken);
+    return _supplyBalanceConverted(_account, _suppliedToken, _returnToken, supplyPrice, returnPrice);
   }
 
   function supplyRatePerBlock(address _token) external view returns(uint) {
     _validateToken(_token);
-    return controller.interestRateModel().supplyRatePerBlock(ILendingPair(address(this)), _token);
+    return _interestRatePerBlock(_token) * _lpRate(_token) / 100e18;
   }
 
   function borrowRatePerBlock(address _token) external view returns(uint) {
     _validateToken(_token);
-    return _borrowRatePerBlock(_token);
-  }
-
-  // Sell collateral to reduce debt and increase accountHealth
-  // Set _repayAmount to uint(-1) to repay all debt, inc. pending interest
-  function liquidateAccount(
-    address _account,
-    address _repayToken,
-    uint    _repayAmount,
-    uint    _minSupplyOutput
-  ) external {
-
-    // Input validation and adjustments
-
-    _validateToken(_repayToken);
-    address supplyToken = _repayToken == tokenA ? tokenB : tokenA;
-
-    // Check account is underwater after interest
-
-    _accrueAccountInterest(_account);
-    _accrueAccountInterest(feeRecipient());
-    uint health = accountHealth(_account);
-    require(health < controller.LIQ_MIN_HEALTH(), "LendingPair: account health > LIQ_MIN_HEALTH");
-
-    // Calculate balance adjustments
-
-    _repayAmount = Math.min(_repayAmount, debtOf[_repayToken][_account]);
-
-    uint supplyDebt   = _convertTokenValues(_repayToken, supplyToken, _repayAmount);
-    uint callerFee    = supplyDebt * controller.liqFeeCaller(_repayToken) / 100e18;
-    uint systemFee    = supplyDebt * controller.liqFeeSystem(_repayToken) / 100e18;
-    uint supplyBurn   = supplyDebt + callerFee + systemFee;
-    uint supplyOutput = supplyDebt + callerFee;
-
-    require(supplyOutput >= _minSupplyOutput, "LendingPair: supplyOutput >= _minSupplyOutput");
-
-    // Adjust balances
-
-    _burnSupply(supplyToken, _account, supplyBurn);
-    _mintSupply(supplyToken, feeRecipient(), systemFee);
-    _burnDebt(_repayToken, _account, _repayAmount);
-
-    // Settle token transfers
-
-    _safeTransferFrom(_repayToken, msg.sender, _repayAmount);
-    _safeTransfer(IERC20(supplyToken), msg.sender, supplyOutput);
-
-    emit Liquidation(_account, _repayToken, supplyToken, _repayAmount, supplyOutput);
-  }
-
-  function pendingSupplyInterest(address _token, address _account) external view returns(uint) {
-    _validateToken(_token);
-    uint newInterest = _newInterest(lpToken[_token].balanceOf(_account), _token, _account);
-    return newInterest * _lpRate(_token) / 100e18;
-  }
-
-  function pendingBorrowInterest(address _token, address _account) external view returns(uint) {
-    _validateToken(_token);
-    return _pendingBorrowInterest(_token, _account);
-  }
-
-  function feeRecipient() public view returns(address) {
-    return controller.feeRecipient();
+    return _interestRatePerBlock(_token);
   }
 
   function checkAccountHealth(address _account) public view  {
     uint health = accountHealth(_account);
-    require(health >= controller.LIQ_MIN_HEALTH(), "LendingPair: insufficient accountHealth");
+    require(health >= LIQ_MIN_HEALTH, "LendingPair: insufficient accountHealth");
   }
 
   function convertTokenValues(
@@ -317,19 +409,19 @@ contract LendingPair is TransferHelper {
     _validateToken(_fromToken);
     _validateToken(_toToken);
 
-    return _convertTokenValues(_fromToken, _toToken, _inputAmount);
+    (uint fromPrice, uint toPrice) = lendingController.tokenPrices(_fromToken, _toToken);
+    return _convertTokenValues(_fromToken, _toToken, _inputAmount, fromPrice, toPrice);
   }
 
   function _depositRepay(address _account, address _token, uint _amount) internal {
 
-    uint debt = debtOf[_token][_account];
-    uint repayAmount = debt > _amount ? _amount : debt;
+    uint debt          = _debtOf(_token, _account);
+    uint repayAmount   = debt > _amount ? _amount : debt;
+    uint depositAmount = _amount - repayAmount;
 
     if (repayAmount > 0) {
-      _repay(_account, _token, repayAmount);
+      _repayShares(_account, _token, _debtToShares(_token, repayAmount));
     }
-
-    uint depositAmount = _amount - repayAmount;
 
     if (depositAmount > 0) {
       _deposit(_account, _token, depositAmount);
@@ -338,192 +430,270 @@ contract LendingPair is TransferHelper {
 
   function _withdrawBorrow(address _token, uint _amount) internal {
 
-    uint supplyAmount = lpToken[_token].balanceOf(msg.sender);
+    uint supplyAmount   = _supplyOf(_token, msg.sender);
     uint withdrawAmount = supplyAmount > _amount ? _amount : supplyAmount;
+    uint borrowAmount   = _amount - withdrawAmount;
 
     if (withdrawAmount > 0) {
-      _withdraw(_token, withdrawAmount);
+      _withdrawShares(_token, _supplyToShares(_token, withdrawAmount));
     }
-
-    uint borrowAmount = _amount - withdrawAmount;
 
     if (borrowAmount > 0) {
       _borrow(_token, borrowAmount);
     }
   }
 
-  function _distributeReward(address _account) internal {
-    IRewardDistribution rewardDistribution = controller.rewardDistribution();
+  // Uses TWAP to estimate min outputs to reduce MEV
+  // Liquidation might be temporarily unavailable due to this
+  function _unwrapUniPosition(address _account) internal {
 
-    if (address(rewardDistribution) != address(0)) {
-      rewardDistribution.distributeReward(_account, tokenA);
-      rewardDistribution.distributeReward(_account, tokenB);
+    if (uniPosition[_account] > 0) {
+
+      (uint priceA, uint priceB) = lendingController.tokenPrices(tokenA, tokenB);
+      (uint amount0, uint amount1) = uniV3Helper.positionAmounts(uniPosition[_account], priceA, priceB);
+      uint uniMinOutput = lendingController.uniMinOutputPct();
+
+      uniManager.approve(address(uniV3Helper), uniPosition[_account]);
+      (uint amountA, uint amountB) = uniV3Helper.removeLiquidity(
+        uniPosition[_account],
+        amount0 * uniMinOutput / 100e18,
+        amount1 * uniMinOutput / 100e18
+      );
+      uniPosition[_account] = 0;
+
+      _mintSupplyAmount(tokenA, _account, amountA);
+      _mintSupplyAmount(tokenB, _account, amountB);
     }
   }
 
-  function _mintSupply(address _token, address _account, uint _amount) internal {
+  // Ensure we never have borrow + supply balances of the same token on the same account
+  function _repayDebtFromSupply(address _account, address _token) internal {
+
+    uint burnAmount = Math.min(_debtOf(_token, _account), _supplyOf(_token, _account));
+
+    if (burnAmount > 0) {
+      _burnDebtShares(_token, _account, _debtToShares(_token, burnAmount));
+      _burnSupplyShares(_token, _account, _supplyToShares(_token, burnAmount));
+    }
+  }
+
+  function _uniCollectFees(address _account) internal returns(uint, uint) {
+    uniManager.approve(address(uniV3Helper), uniPosition[_account]);
+    return uniV3Helper.collectFees(uniPosition[_account]);
+  }
+
+  function _mintSupplyAmount(address _token, address _account, uint _amount) internal returns(uint shares) {
     if (_amount > 0) {
-      lpToken[_token].mint(_account, _amount);
+      shares = _supplyToShares(_token, _amount);
+      supplySharesOf[_token][_account] += shares;
+      totalSupplyShares[_token] += shares;
+      totalSupplyAmount[_token] += _amount;
     }
   }
 
-  function _burnSupply(address _token, address _account, uint _amount) internal {
+  function _burnSupplyShares(address _token, address _account, uint _shares) internal returns(uint amount) {
+    if (_shares > 0) {
+      amount = _sharesToSupply(_token, _shares);
+      supplySharesOf[_token][_account] -= _shares;
+      totalSupplyShares[_token] -= _shares;
+      totalSupplyAmount[_token] -= amount;
+    }
+  }
+
+  function _mintDebtAmount(address _token, address _account, uint _amount) internal returns(uint shares) {
     if (_amount > 0) {
-      lpToken[_token].burn(_account, _amount);
+      shares = _debtToShares(_token, _amount);
+      debtSharesOf[_token][_account] += shares;
+      totalDebtShares[_token] += shares;
+      totalDebtAmount[_token] += _amount;
     }
   }
 
-  function _mintDebt(address _token, address _account, uint _amount) internal {
-    debtOf[_token][_account] += _amount;
-    totalDebt[_token] += _amount;
-  }
-
-  function _burnDebt(address _token, address _account, uint _amount) internal {
-    debtOf[_token][_account] -= _amount;
-    totalDebt[_token] -= _amount;
-  }
-
-  function _accrueAccountInterest(address _account) internal {
-    uint lpBalanceA = lpToken[tokenA].balanceOf(_account);
-    uint lpBalanceB = lpToken[tokenB].balanceOf(_account);
-
-    _accrueAccountSupply(tokenA, lpBalanceA, _account);
-    _accrueAccountSupply(tokenB, lpBalanceB, _account);
-    _accrueAccountDebt(tokenA, _account);
-    _accrueAccountDebt(tokenB, _account);
-
-    accountInterestSnapshot[tokenA][_account] = cumulativeInterestRate[tokenA];
-    accountInterestSnapshot[tokenB][_account] = cumulativeInterestRate[tokenB];
-  }
-
-  function _accrueAccountSupply(address _token, uint _amount, address _account) internal {
-    if (_amount > 0) {
-      uint supplyInterest   = _newInterest(_amount, _token, _account);
-      uint newSupplyAccount = supplyInterest * _lpRate(_token) / 100e18;
-      uint newSupplySystem  = supplyInterest * _systemRate(_token) / 100e18;
-
-      _mintSupply(_token, _account, newSupplyAccount);
-      _mintSupply(_token, feeRecipient(), newSupplySystem);
+  function _burnDebtShares(address _token, address _account, uint _shares) internal returns(uint amount) {
+    if (_shares > 0) {
+      amount = _sharesToDebt(_token, _shares);
+      debtSharesOf[_token][_account] -= _shares;
+      totalDebtShares[_token] -= _shares;
+      totalDebtAmount[_token] -= amount;
     }
   }
 
-  function _accrueAccountDebt(address _token, address _account) internal {
-    if (debtOf[_token][_account] > 0) {
-      uint newDebt = _pendingBorrowInterest(_token, _account);
-      _mintDebt(_token, _account, newDebt);
+  function _accrueDebt(address _token) internal returns(uint newDebt) {
+    if (totalDebtAmount[_token] > 0) {
+      uint blocksElapsed = block.number - lastBlockAccrued[_token];
+      uint pendingInterestRate = _interestRatePerBlock(_token) * blocksElapsed;
+      newDebt = totalDebtAmount[_token] * pendingInterestRate / 100e18;
+      totalDebtAmount[_token] += newDebt;
     }
   }
 
-  function _withdraw(address _token, uint _amount) internal {
-
-    lpToken[address(_token)].burn(msg.sender, _amount);
-
+  function _withdrawShares(address _token, uint _shares) internal {
+    uint amount = _burnSupplyShares(_token, msg.sender, _shares);
     checkAccountHealth(msg.sender);
-
-    emit Withdraw(_token, _amount);
+    emit Withdraw(_token, amount);
   }
 
   function _borrow(address _token, uint _amount) internal {
 
-    require(lpToken[address(_token)].balanceOf(msg.sender) == 0, "LendingPair: cannot borrow supplied token");
+    require(supplySharesOf[_token][msg.sender] == 0, "LendingPair: cannot borrow supplied token");
 
-    _mintDebt(_token, msg.sender, _amount);
+    _mintDebtAmount(_token, msg.sender, _amount);
 
+    _checkBorrowEnabled();
     _checkBorrowLimits(_token, msg.sender);
     checkAccountHealth(msg.sender);
 
     emit Borrow(_token, _amount);
   }
 
-  function _repay(address _account, address _token, uint _amount) internal {
-    _burnDebt(_token, _account, _amount);
-    emit Repay(_account, _token, _amount);
+  function _repayShares(address _account, address _token, uint _shares) internal returns(uint amount) {
+    amount = _burnDebtShares(_token, _account, _shares);
+    emit Repay(_account, _token, amount);
   }
 
   function _deposit(address _account, address _token, uint _amount) internal {
 
-    _checkOracleSupport(tokenA);
-    _checkOracleSupport(tokenB);
+    require(debtSharesOf[_token][_account] == 0, "LendingPair: cannot deposit borrowed token");
 
-    require(debtOf[_token][_account] == 0, "LendingPair: cannot deposit borrowed token");
-
-    _mintSupply(_token, _account, _amount);
+    _mintSupplyAmount(_token, _account, _amount);
+    _checkDepositsEnabled();
     _checkDepositLimit(_token);
 
     emit Deposit(_account, _token, _amount);
   }
 
-  function _accrueInterest(address _token) internal {
-    uint blocksElapsed = block.number - lastBlockAccrued;
-    uint newInterest = _borrowRatePerBlock(_token) * blocksElapsed;
-    cumulativeInterestRate[_token] += newInterest;
-  }
-
-  function _createLpToken(address _lpTokenMaster) internal returns(IERC20) {
+  function _createLpToken(address _lpTokenMaster, address _underlying) internal returns(address) {
     ILPTokenMaster newLPToken = ILPTokenMaster(_lpTokenMaster.clone());
-    newLPToken.initialize();
-    return IERC20(newLPToken);
+    newLPToken.initialize(_underlying, address(lendingController));
+    return address(newLPToken);
   }
 
-  function _safeTransfer(IERC20 _token, address _recipient, uint _amount) internal {
-    if (_amount > 0) {
-      bool success = _token.transfer(_recipient, _amount);
-      require(success, "LendingPair: transfer failed");
-      _checkMinReserve(address(_token));
+  function _amountToShares(uint _totalShares, uint _totalAmount, uint _inputSupply) internal view returns(uint) {
+    if (_totalShares > 0 && _totalAmount > 0) {
+      return _inputSupply * _totalShares / _totalAmount;
+    } else {
+      return _inputSupply;
     }
   }
 
-  function _wethWithdrawTo(address _to, uint _amount) internal override {
-    if (_amount > 0) {
-      TransferHelper._wethWithdrawTo(_to, _amount);
-      _checkMinReserve(address(WETH));
+  function _sharesToAmount(uint _totalShares, uint _totalAmount, uint _inputShares) internal view returns(uint) {
+    if (_totalShares > 0 && _totalAmount > 0) {
+      return _inputShares * _totalAmount / _totalShares;
+    } else {
+      return _inputShares;
     }
   }
 
-  function _borrowRatePerBlock(address _token) internal view returns(uint) {
-    return controller.interestRateModel().borrowRatePerBlock(ILendingPair(address(this)), _token);
+  function _debtToShares(address _token, uint _amount) internal view returns(uint) {
+    return _amountToShares(totalDebtShares[_token], totalDebtAmount[_token], _amount);
   }
 
-  function _pendingBorrowInterest(address _token, address _account) internal view returns(uint) {
-    return _newInterest(debtOf[_token][_account], _token, _account);
+  function _sharesToDebt(address _token, uint _shares) internal view returns(uint) {
+    return _sharesToAmount(totalDebtShares[_token], totalDebtAmount[_token], _shares);
   }
 
-  function _borrowBalance(
+  function _supplyToShares(address _token, uint _amount) internal view returns(uint) {
+    return _amountToShares(totalSupplyShares[_token], totalSupplyAmount[_token], _amount);
+  }
+
+  function _sharesToSupply(address _token, uint _shares) internal view returns(uint) {
+    return _sharesToAmount(totalSupplyShares[_token], totalSupplyAmount[_token], _shares);
+  }
+
+  function _debtOf(address _token, address _account) internal view returns(uint) {
+    return _sharesToDebt(_token, debtSharesOf[_token][_account]);
+  }
+
+  function _supplyOf(address _token, address _account) internal view returns(uint) {
+    return _sharesToSupply(_token, supplySharesOf[_token][_account]);
+  }
+
+  function _interestRatePerBlock(address _token) internal view returns(uint) {
+    return _interestRateModel().interestRatePerBlock(
+      address(this),
+      _token,
+      totalSupplyAmount[_token],
+      totalDebtAmount[_token]
+    );
+  }
+
+  function _interestRateModel() internal view returns(IInterestRateModel) {
+    return IInterestRateModel(lendingController.interestRateModel());
+  }
+
+  // Get borrow balance converted to the units of _returnToken
+  function _borrowBalanceConverted(
     address _account,
     address _borrowedToken,
-    address _returnToken
+    address _returnToken,
+    uint    _borrowPrice,
+    uint    _returnPrice
   ) internal view returns(uint) {
 
-    return _convertTokenValues(_borrowedToken, _returnToken, debtOf[_borrowedToken][_account]);
+    return _convertTokenValues(
+      _borrowedToken,
+      _returnToken,
+      _debtOf(_borrowedToken, _account),
+      _borrowPrice,
+      _returnPrice
+    );
   }
 
   // Get supply balance converted to the units of _returnToken
-  function _supplyBalance(
+  function _supplyBalanceConverted(
     address _account,
     address _suppliedToken,
-    address _returnToken
+    address _returnToken,
+    uint    _supplyPrice,
+    uint    _returnPrice
   ) internal view returns(uint) {
 
-    return _convertTokenValues(_suppliedToken, _returnToken, lpToken[_suppliedToken].balanceOf(_account));
+    return _convertTokenValues(
+      _suppliedToken,
+      _returnToken,
+      _supplyOf(_suppliedToken, _account),
+      _supplyPrice,
+      _returnPrice
+    );
   }
 
-  function _supplyCredit(
+  function _supplyCreditUni(
     address _account,
-    address _suppliedToken,
-    address _returnToken
+    address _returnToken,
+    uint    _priceA,
+    uint    _priceB,
+    uint    _colFactorA,
+    uint    _colFactorB
   ) internal view returns(uint) {
 
-    return _supplyBalance(_account, _suppliedToken, _returnToken) * controller.colFactor(_suppliedToken) / 100e18;
+    if (uniPosition[_account] > 0) {
+
+      (uint amountA, uint amountB) = uniV3Helper.positionAmounts(uniPosition[_account], _priceA, _priceB);
+
+      uint supplyA = _convertTokenValues(tokenA, _returnToken, amountA, _priceA, _priceB);
+      uint supplyB = _convertTokenValues(tokenB, _returnToken, amountB, _priceB, _priceB);
+
+      uint creditA = supplyA * _colFactorA / 100e18;
+      uint creditB = supplyB * _colFactorB / 100e18;
+
+      return (creditA + creditB);
+
+    } else {
+      return 0;
+    }
   }
 
+  // Not calling priceOracle.convertTokenValues() to save gas by reusing already fetched prices
   function _convertTokenValues(
     address _fromToken,
     address _toToken,
-    uint    _inputAmount
+    uint    _inputAmount,
+    uint    _fromPrice,
+    uint    _toPrice
   ) internal view returns(uint) {
 
-    uint priceFrom = controller.tokenPrice(_fromToken) * 1e18 / 10 ** IERC20(_fromToken).decimals();
-    uint priceTo   = controller.tokenPrice(_toToken)   * 1e18 / 10 ** IERC20(_toToken).decimals();
+    uint priceFrom = _fromPrice * 1e18 / 10 ** decimals[_fromToken];
+    uint priceTo   = _toPrice   * 1e18 / 10 ** decimals[_toToken];
 
     return _inputAmount * priceFrom / priceTo;
   }
@@ -532,46 +702,37 @@ contract LendingPair is TransferHelper {
     require(_token == tokenA || _token == tokenB, "LendingPair: invalid token");
   }
 
-  function _checkOracleSupport(address _token) internal view {
-    require(controller.tokenSupported(_token), "LendingPair: token not supported");
-  }
-
-  function _checkMinReserve(address _token) internal view {
-    require(IERC20(_token).balanceOf(address(this)) >= MIN_RESERVE, "LendingPair: below MIN_RESERVE");
+  function _validateUniPosition(uint _positionID) internal view {
+    (address uniTokenA, address uniTokenB) = uniV3Helper.positionTokens(_positionID);
+    _validateToken(uniTokenA);
+    _validateToken(uniTokenB);
   }
 
   function _checkDepositLimit(address _token) internal view {
-    require(controller.depositsEnabled(), "LendingPair: deposits disabled");
-
-    uint depositLimit = controller.depositLimit(address(this), _token);
+    uint depositLimit = lendingController.depositLimit(address(this), _token);
 
     if (depositLimit > 0) {
-      require((lpToken[_token].totalSupply()) <= depositLimit, "LendingPair: deposit limit reached");
+      require(totalSupplyAmount[_token] <= depositLimit, "LendingPair: deposit limit reached");
     }
+  }
+
+  function _checkDepositsEnabled() internal view {
+    require(lendingController.depositsEnabled(), "LendingPair: deposits disabled");
+  }
+
+  function _checkBorrowEnabled() internal view {
+    require(lendingController.borrowingEnabled(), "LendingPair: borrowing disabled");
   }
 
   function _checkBorrowLimits(address _token, address _account) internal view {
-    require(controller.borrowingEnabled(), "LendingPair: borrowing disabled");
-
-    uint accountBorrowUSD = debtOf[_token][_account] * controller.tokenPrice(_token) / 1e18;
-    require(accountBorrowUSD >= controller.minBorrowUSD(), "LendingPair: borrow amount below minimum");
-
-    uint borrowLimit = controller.borrowLimit(address(this), _token);
+    uint borrowLimit = lendingController.borrowLimit(address(this), _token);
 
     if (borrowLimit > 0) {
-      require(totalDebt[_token] <= borrowLimit, "LendingPair: borrow limit reached");
+      require(totalDebtAmount[_token] <= borrowLimit, "LendingPair: borrow limit reached");
     }
   }
 
-  function _systemRate(address _token) internal view returns(uint) {
-    return controller.interestRateModel().systemRate(ILendingPair(address(this)), _token);
-  }
-
   function _lpRate(address _token) internal view returns(uint) {
-    return 100e18 - _systemRate(_token);
-  }
-
-  function _newInterest(uint _balance, address _token, address _account) internal view returns(uint) {
-    return _balance * (cumulativeInterestRate[_token] - accountInterestSnapshot[_token][_account]) / 100e18;
+    return _interestRateModel().lpRate(address(this), _token);
   }
 }

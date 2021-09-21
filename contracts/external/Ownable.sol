@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.0;
+pragma solidity 0.8.6;
 
-contract Ownable {
+import '../interfaces/IOwnable.sol';
 
-  address public owner;
+contract Ownable is IOwnable {
 
-  event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+  address public override owner;
+  address public pendingOwner;
+
+  event OwnershipTransferInitiated(address indexed previousOwner, address indexed newOwner);
+  event OwnershipTransferConfirmed(address indexed previousOwner, address indexed newOwner);
 
   constructor() {
     owner = msg.sender;
-    emit OwnershipTransferred(address(0), owner);
+    emit OwnershipTransferConfirmed(address(0), owner);
   }
 
   modifier onlyOwner() {
@@ -22,18 +26,16 @@ contract Ownable {
     return msg.sender == owner;
   }
 
-  function renounceOwnership() external onlyOwner {
-    emit OwnershipTransferred(owner, address(0));
-    owner = address(0);
+  function transferOwnership(address _newOwner) external override onlyOwner {
+    require(_newOwner != address(0), "Ownable: new owner is the zero address");
+    emit OwnershipTransferInitiated(owner, _newOwner);
+    pendingOwner = _newOwner;
   }
 
-  function transferOwnership(address newOwner) external onlyOwner {
-    _transferOwnership(newOwner);
-  }
-
-  function _transferOwnership(address newOwner) internal {
-    require(newOwner != address(0), "Ownable: new owner is the zero address");
-    emit OwnershipTransferred(owner, newOwner);
-    owner = newOwner;
+  function acceptOwnership() external override {
+    require(msg.sender == pendingOwner, "Ownable: caller is not pending owner");
+    emit OwnershipTransferConfirmed(owner, pendingOwner);
+    owner = pendingOwner;
+    pendingOwner = address(0);
   }
 }

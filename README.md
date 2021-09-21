@@ -14,11 +14,13 @@ Wild Credit is a lending protocol. Unlike Compound or Aave, which are composed o
 
 Both tokens in each lending pair can be used either as collateral or the borrowed token. To borrow one token, the borrower must deposit the other token as collateral. Each account can only borrow one of the tokens at the same time. To borrow the other token, the currently borrowed token must be repaid in full and the collateral must be withdrawn. A lender may deposit both tokens at the same time to earn interest.
 
-Please review all contracts in this repository. Special interest could be given to the `RewardDistribution.sol` contract and how it interacts with the `LendingPair.sol`
+Borrowers are also able to use their Uniswap V3 positions as collateral.
 
-A preview of how the protocol will work can be seen on http://kovan.wild.credit/
+Please review all contracts in this repository. Special interest could be given to `positionAmounts()` function inside of `UniswapV3Helper.sol` which is used to determine USD value of a position. Another potential source of bugs could be token conversions inside of `LendingPair.sol`. There are a lot of functions accepting tokenA, tokenB, priceA, priceB, converting amounts to shares, shares to amounts, etc.
 
-ERC20 difference: `LPTokenMaster.sol` changes the `_transfer` function
+The **old version** of the protocol can be seen here http://wild.credit/ Note that this UI should only be used to get a basic conceptual understanding of how the protocol works. It uses an old version of contracts which do not support Uniswap V3 positions.
+
+ERC20 difference: `LPTokenMaster.sol` outsources balance tracking & manipulations to the `LendingPair`. Since most balance manipulations are likely to be related to lending and not transfers, this change was made to save gas by reducing external calls from the `LendingPair`.
 
 Please disregard anything currently deployed on mainnet. Subject to review is only the code in this repo and nothing else.
 
@@ -30,4 +32,4 @@ External calls are made by the oracles - Chainlink and Uniswap V3 oracles.
 - https://discord.gg/emcBDpwf6G
 - https://wild.credit/
 
-Docs: https://wild-credit.gitbook.io/wild-credit/
+Docs (old version): https://wild-credit.gitbook.io/wild-credit/
