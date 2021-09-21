@@ -18,7 +18,7 @@ Please review all contracts in this repository. Special interest could be given 
 
 A preview of how the protocol will work can be seen on http://kovan.wild.credit/
 
-ERC20 difference: `LPTokenMaster.sol` changes the `_transfer` function
+ERC20 difference: `LPTokenMaster.sol` changes the `_transfer` function.
 
 Please disregard anything currently deployed on mainnet. Subject to review is only the code in this repo and nothing else.
 
