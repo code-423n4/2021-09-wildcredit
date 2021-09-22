@@ -178,7 +178,7 @@ contract UniswapV3Helper is ERC721Receivable {
     _safeTransfer(token1, msg.sender, _amount1);
   }
 
-  // Can't use TransferHelper due since it's on another version fo Solidity
+  // Can't use TransferHelper due since it's on another version of Solidity
   function _safeTransfer(address _token, address _recipient, uint _amount) internal {
     require(_amount > 0, "UniswapV3Helper: amount must be > 0");
     IERC20(_token).safeTransfer(_recipient, _amount);
