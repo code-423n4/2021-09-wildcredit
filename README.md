@@ -34,6 +34,8 @@ Uniswap-related files are on 0.7 since it's not easy to port to 0.8. Rest of the
 
 You can use the following command to compile all contracts: `brownie compile`
 
+To compile this project with hardhat, switch to the `hardhat` branch.
+
 ## Links
 
 - https://github.com/code-423n4/2021-07-wildcredit/blob/main/wild_credit_logo.png
