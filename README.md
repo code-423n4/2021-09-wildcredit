@@ -26,6 +26,16 @@ Please disregard anything currently deployed on mainnet. Subject to review is on
 
 External calls are made by the oracles - Chainlink and Uniswap V3 oracles.
 
+## Compiler notes
+
+The repo uses brownie-style imports for OZ.
+
+Uniswap-related files are on 0.7 since it's not easy to port to 0.8. Rest of the repo is on 0.8.
+
+You can use the following command to compile all contracts: `brownie compile`
+
+## Links
+
 - https://github.com/code-423n4/2021-07-wildcredit/blob/main/wild_credit_logo.png
 - https://twitter.com/wildcredit
 - https://twitter.com/0xdev0
