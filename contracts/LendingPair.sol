@@ -17,8 +17,8 @@ import './external/Math.sol';
 import './external/Address.sol';
 import './external/Clones.sol';
 import './external/ReentrancyGuard.sol';
+import './external/ERC721Receivable.sol';
 
-import './ERC721Receivable.sol';
 import './TransferHelper.sol';
 
 contract LendingPair is ILendingPair, ReentrancyGuard, TransferHelper, ERC721Receivable {
