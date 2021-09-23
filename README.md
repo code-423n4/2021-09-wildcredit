@@ -36,8 +36,8 @@ This branch fixes compilation errors related to the use of hardhat.
 
 Local changes required for making it compile with hardhat:
 
-Add `pragma solidity 0.7.5;` to `node_modules/@uniswap/v3-core/contracts/libraries/TickMath.sol`
-Add `pragma solidity 0.7.5;` to `node_modules/@uniswap/v3-core/contracts/libraries/FullMath.sol`
+- Add `pragma solidity 0.7.5;` to `node_modules/@uniswap/v3-core/contracts/libraries/TickMath.sol`
+- Add `pragma solidity 0.7.5;` to `node_modules/@uniswap/v3-core/contracts/libraries/FullMath.sol`
 
 ## Links
 
