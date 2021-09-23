@@ -3,8 +3,8 @@
 pragma solidity 0.8.6;
 
 import './interfaces/IERC20.sol';
-import './interfaces/uniV3/IUniswapV3Pool.sol';
-import './interfaces/uniV3/IUniswapV3Factory.sol';
+import './interfaces/univ3/IUniswapV3Pool.sol';
+import './interfaces/univ3/IUniswapV3Factory.sol';
 import './interfaces/ILinkOracle.sol';
 import './interfaces/IPriceOracle.sol';
 import './interfaces/IUniswapPriceConverter.sol';

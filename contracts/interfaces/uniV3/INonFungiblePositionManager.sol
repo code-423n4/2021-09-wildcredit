@@ -2,8 +2,8 @@
 pragma solidity 0.7.5;
 pragma abicoder v2;
 
-import "openzeppelin/openzeppelin-contracts@3.4.1-solc-0.7-2/contracts/token/ERC721/IERC721Metadata.sol";
-import "openzeppelin/openzeppelin-contracts@3.4.1-solc-0.7-2/contracts/token/ERC721/IERC721Enumerable.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Metadata.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Enumerable.sol";
 
 import "./IPoolInitializer.sol";
 import "../IERC721Permit.sol";
@@ -14,7 +14,7 @@ import "../../external/PoolAddress.sol";
 /// @title Non-fungible token for positions
 /// @notice Wraps Uniswap V3 positions in a non-fungible token interface which allows for them to be transferred
 /// and authorized.
-interface INonfungiblePositionManager is
+interface INonFungiblePositionManager is
     IPeripheryPayments,
     IPeripheryImmutableState,
     IERC721Metadata,

@@ -3,26 +3,26 @@
 pragma solidity 0.7.5;
 pragma abicoder v2;
 
-import 'uniswap/uniswap-v3-core@1.0.0/contracts/libraries/TickMath.sol';
-import 'uniswap/uniswap-v3-core@1.0.0/contracts/libraries/FixedPoint128.sol';
-import 'uniswap/uniswap-v3-core@1.0.0/contracts/libraries/FullMath.sol';
-import 'uniswap/uniswap-v3-core@1.0.0/contracts/libraries/SqrtPriceMath.sol';
+import '@uniswap/v3-core/contracts/libraries/TickMath.sol';
+import '@uniswap/v3-core/contracts/libraries/FixedPoint128.sol';
+import '@uniswap/v3-core/contracts/libraries/FullMath.sol';
+import '@uniswap/v3-core/contracts/libraries/SqrtPriceMath.sol';
 
 import './external/PositionKey.sol';
 import './external/PoolAddress.sol';
 import './external/SafeERC20.sol';
 import './external/ERC721Receivable.sol';
 
-import 'uniswap/uniswap-v3-core@1.0.0/contracts/interfaces/IUniswapV3Pool.sol';
+import '@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol';
 
 import './interfaces/IERC20.sol';
-import './interfaces/univ3/INonfungiblePositionManager.sol';
+import './interfaces/univ3/INonFungiblePositionManager.sol';
 
 contract UniswapV3Helper is ERC721Receivable {
 
   using SafeERC20 for IERC20;
 
-  INonfungiblePositionManager internal constant positionManager = INonfungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
+  INonFungiblePositionManager internal constant positionManager = INonFungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
   function removeLiquidity(
     uint _tokenId,
@@ -33,8 +33,8 @@ contract UniswapV3Helper is ERC721Receivable {
     positionManager.safeTransferFrom(msg.sender, address(this), _tokenId);
     uint128 liquidity = uint128(positionLiquidity(_tokenId));
 
-    INonfungiblePositionManager.DecreaseLiquidityParams memory params =
-      INonfungiblePositionManager.DecreaseLiquidityParams({
+    INonFungiblePositionManager.DecreaseLiquidityParams memory params =
+      INonFungiblePositionManager.DecreaseLiquidityParams({
         tokenId:    _tokenId,
         liquidity:  liquidity,
         amount0Min: _minOutput0,
@@ -161,8 +161,8 @@ contract UniswapV3Helper is ERC721Receivable {
 
   function _collectFees(uint _tokenId) internal returns (uint, uint) {
 
-    INonfungiblePositionManager.CollectParams memory params =
-      INonfungiblePositionManager.CollectParams({
+    INonFungiblePositionManager.CollectParams memory params =
+      INonFungiblePositionManager.CollectParams({
       tokenId: _tokenId,
       recipient: address(this),
       amount0Max: type(uint128).max,

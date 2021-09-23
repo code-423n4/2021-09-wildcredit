@@ -28,11 +28,16 @@ External calls are made by the oracles - Chainlink and Uniswap V3 oracles.
 
 ## Compiler notes
 
-The repo uses brownie-style imports for OZ.
-
 Uniswap-related files are on 0.7 since it's not easy to port to 0.8. Rest of the repo is on 0.8.
 
-You can use the following command to compile all contracts: `brownie compile`
+The main branch is using brownie which doesn't produce any compilation errors.
+
+This branch fixes compilation errors related to the use of hardhat.
+
+Local changes required for making it compile with hardhat:
+
+Add `pragma solidity 0.7.5;` to `node_modules/@uniswap/v3-core/contracts/libraries/TickMath.sol`
+Add `pragma solidity 0.7.5;` to `node_modules/@uniswap/v3-core/contracts/libraries/FullMath.sol`
 
 ## Links
 
